@@ -1,0 +1,7 @@
+fastapi==0.136.1
+langchain-chroma==1.1.0
+langchain-openai==1.2.1
+langchain-text-splitters==1.1.2
+PyMuPDF==1.27.2.3
+python-multipart==0.0.29
+uvicorn[standard]==0.47.0

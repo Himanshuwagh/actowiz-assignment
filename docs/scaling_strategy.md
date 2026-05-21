@@ -1,53 +1,35 @@
-# Scaling Strategy & Trade-offs
+# Scaling Strategy And Trade-offs
 
----
+## Submission Choice
 
-## Current state
+This repository keeps the runtime small:
 
-Two documents ingested: `Knowledge_Base_Sample.pdf` (~95 chunks) and `Source_Code_Sample.py` (~12 chunks). About 107 vectors in Qdrant total. A single FastAPI instance, one Celery worker, and a single Qdrant node handle this comfortably.
+- one FastAPI process
+- FastAPI background ingestion
+- SQLite metadata
+- local persistent Chroma
+- OpenAI embeddings
 
-The architecture is intentionally lean for now — no point over-engineering for 107 vectors.
+That is enough to ingest the two task files through the API and demonstrate semantic retrieval quickly.
 
----
+## Trade-offs
 
-## How each layer scales
+| Choice | Benefit | Limit |
+|---|---|---|
+| FastAPI background task | No worker stack to run for the assignment | Work stops if the API process dies |
+| SQLite | Zero database setup | Limited concurrent writes and operational tooling |
+| Local Chroma | Persistent vector search without another server | Not a multi-node production store |
+| OpenAI embeddings | Good retrieval quality with little code | Requires API key and network access |
+| OCR fallback | Makes the provided image-based PDF searchable | OCR is slower and can introduce text noise |
 
-**API (FastAPI)**  
-Stateless — any worker can serve any request. Scale horizontally via Kubernetes HPA when CPU > 60% or RPS crosses a threshold. 3 replicas minimum for HA.
+## Production Path
 
-**Ingestion workers (Celery)**  
-Scale independently from the API. Queue depth triggers new workers. Separate queues for `ingest` and `hard_delete` so a large upload doesn't block a delete operation.
+At higher upload volume:
 
-**Vector DB (Qdrant)**  
-Currently single node, in-memory. When chunks grow past ~50K, switch to `memmap` storage (vectors on disk, index in RAM). Past 1M vectors, enable distributed mode and shard the collection.
+1. Move ingestion to a worker queue so OCR, chunking, and embedding retries survive API restarts.
+2. Move document metadata and query logs to PostgreSQL.
+3. Use object storage for original uploads.
+4. Use a production vector store with backup, replication, metadata indexes, and monitoring.
+5. Add auth, rate limits, deduplication, embedding retry policy, metrics, and tracing.
 
-**Postgres**  
-Single instance is fine for metadata at this scale. Add a read replica when analytics queries start competing with write traffic. `query_logs` is designed for monthly range partitioning — activate it when rows hit ~100K.
-
-**Redis**  
-Handles caching and the job queue. Fine as-is for this scale. If job volume ever crosses ~10K/day, migrate the queue to Kafka (Celery task code doesn't change).
-
----
-
-## Key trade-offs
-
-| Decision | Why |
-|---|---|
-| Async ingestion (not sync) | Even a short PDF can take 10–20s to embed; blocking the API would cause timeouts |
-| Soft delete by default | Accidental deletes are recoverable; hard delete is opt-in with `?hard=true` |
-| OpenAI for embeddings (not self-hosted) | At 100 developers and 2 documents the cost is basically zero; abstracted behind `EmbeddingService` so swapping to a local model later is a one-line change |
-| Qdrant over Pinecone | Self-hostable, no vendor lock-in, payload filtering runs inside HNSW (no post-filter overhead) |
-| Cross-encoder reranking optional | Adds ~50ms; good default but can be disabled for latency-sensitive integrations |
-| Redis for both cache and queue | Simple to operate at this scale; Kafka is overkill for 100 developers |
-
----
-
-## If the corpus grows significantly
-
-Three things to do when document count starts scaling up:
-
-1. **Switch Qdrant to memmap storage** once the collection exceeds ~50K vectors — vectors move to disk, index stays in RAM, memory pressure drops significantly with minimal latency impact.
-
-2. **Partition `query_logs` by month** — the schema is already range-partitioned on `created_at`. Turn it on before logs exceed ~100K rows so analytics queries don't start scanning the whole table.
-
-3. **Batch embed across documents in parallel** — currently ingestion processes one document at a time. With high upload volume, Celery workers should embed multiple documents concurrently and pre-warm the embedding cache for common query patterns.
+Soft delete should stay the default for accidental deletion recovery. Hard delete should be a controlled cleanup path that deletes vectors and metadata with retries.

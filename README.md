@@ -1,82 +1,116 @@
 # Internal AI Knowledge Platform
 
-**Submitted by:** Himanshu Wagh | Python Developer | May 21, 2026
-
----
-
-## What this is
-
-A backend RAG system that lets internal developers upload documents and code files, then query them using natural language. Built for ~100 developers.
-
-**Knowledge base used in this submission:**
-- `Knowledge_Base_Sample.pdf` — document RAG
-- `Source_Code_Sample.py` — code-base RAG
-
----
+Minimal backend submission for uploading documents and code, embedding their chunks, and retrieving relevant chunks with semantic search.
 
 ## Stack
 
-| Layer | Choice |
-|---|---|
-| API | FastAPI |
-| Async jobs | Celery + Redis |
-| Metadata DB | PostgreSQL |
-| Vector DB | Qdrant |
-| Embeddings | OpenAI `text-embedding-3-small` |
-| LLM Gateway | GPT-4o / Claude 3.5 |
+- FastAPI API service
+- LangChain text splitters, OpenAI embeddings, and Chroma integration
+- Persistent local Chroma vector store
+- SQLite metadata and query logs
+- PyMuPDF PDF extraction with Tesseract OCR fallback for scanned or image-based pages
 
----
+The provided `Knowledge_Base_Sample (2).pdf` is image-based, so OCR is required for usable retrieval from it.
 
 ## Architecture
 
-Three services behind a single API gateway:
+```mermaid
+flowchart LR
+    Client["Client or Swagger UI"] --> API["FastAPI"]
+    API --> Upload["Background ingestion"]
+    Upload --> Extract["PDF text or OCR\nCode/text extraction"]
+    Extract --> Split["LangChain chunking"]
+    Split --> Embed["OpenAI embeddings"]
+    Embed --> Chroma["Chroma vectors and chunks"]
+    API --> SQLite["SQLite documents and query_logs"]
+    API --> Search["Query embedding and Chroma search"]
+    Search --> Chroma
+```
 
-- **Ingestion Service** — parses files, chunks them, generates embeddings async
-- **Query Service** — embeds the query, runs vector search, reranks, returns results
-- **Management Service** — list, status, delete documents
+## Setup
 
-![System Architecture](docs/diagrams/system_architecture.png)
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+export OPENAI_API_KEY=your_key
+uvicorn main:app --reload
+```
 
----
+Tesseract must be installed for OCR fallback. On macOS:
 
-## APIs (quick reference)
+```bash
+brew install tesseract
+```
 
-| Method | Endpoint | What it does |
-|---|---|---|
-| `POST` | `/documents` | Upload a file (returns `job_id`, processes async) |
-| `GET` | `/documents` | List all documents |
-| `GET` | `/documents/{id}` | Get document + status |
-| `DELETE` | `/documents/{id}` | Soft delete (default) or hard delete (`?hard=true`) |
-| `POST` | `/query` | Semantic search over the knowledge base |
-| `GET` | `/jobs/{id}` | Poll ingestion job progress |
-| `GET` | `/health` | Health check |
+The API docs are available at `http://127.0.0.1:8000/docs`.
 
-Full spec → [`docs/api_specification.md`](docs/api_specification.md)
+## API Flow
 
----
+Upload the task PDF:
 
-## Database
+```bash
+curl -X POST http://127.0.0.1:8000/documents \
+  -F 'file=@Knowledge_Base_Sample (2).pdf'
+```
 
-Four tables: `documents`, `chunks`, `query_logs`, `jobs`
+Upload the task code file:
 
+```bash
+curl -X POST http://127.0.0.1:8000/documents \
+  -F 'file=@Source_Code_Sample (2).py'
+```
 
-Full schema → [`docs/database_schema.md`](docs/database_schema.md)
+Poll each returned document id:
 
----
+```bash
+curl http://127.0.0.1:8000/documents/<document_id>
+```
 
-## How search works
+Query the code sample:
 
-1. PDF chunks split by paragraph (~512 tokens, 64 overlap)
-2. Python code chunks split by function/class using AST
-3. Each chunk embedded → stored in Qdrant
-4. Query embedded → HNSW ANN search → cross-encoder reranking → top-K returned
+```bash
+curl -X POST http://127.0.0.1:8000/query \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "query": "What happens when report_failure is called for a failed proxy?",
+    "top_k": 3,
+    "filters": {"file_type": "py"}
+  }'
+```
 
-Full design → [`docs/semantic_search_design.md`](docs/semantic_search_design.md)
+Query the PDF:
 
----
+```bash
+curl -X POST http://127.0.0.1:8000/query \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "query": "Why are enterprises adopting AI orchestration instead of traditional integration?",
+    "top_k": 3,
+    "filters": {"file_type": "pdf"}
+  }'
+```
 
-## Scaling & trade-offs
+Delete a document:
 
-Current setup is lean (2 documents, ~150 vectors). Architecture is ready to scale horizontally when needed.
+```bash
+curl -X DELETE http://127.0.0.1:8000/documents/<document_id>
+curl -X DELETE 'http://127.0.0.1:8000/documents/<document_id>?hard=true'
+```
 
-Full write-up → [`docs/scaling_strategy.md`](docs/scaling_strategy.md)
+## Submission Proof
+
+Capture Swagger UI or curl screenshots that show:
+
+1. Both task files uploaded through `POST /documents`
+2. Both documents reaching `ready` with non-zero `chunk_count`
+3. A code query returning the `report_failure` chunk
+4. A PDF query returning OCR-derived content about AI orchestration
+5. One filtered query with `file_type` set to `py` or `pdf`
+
+## Docs
+
+- [API specification](docs/api_specification.md)
+- [Database schema](docs/database_schema.md)
+- [Semantic search design](docs/semantic_search_design.md)
+- [Scaling strategy](docs/scaling_strategy.md)

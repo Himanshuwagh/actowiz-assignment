@@ -59,7 +59,6 @@ Full spec → [`docs/api_specification.md`](docs/api_specification.md)
 
 Four tables: `documents`, `chunks`, `query_logs`, `jobs`
 
-![Schema](docs/diagrams/database_schema.png)
 
 Full schema → [`docs/database_schema.md`](docs/database_schema.md)
 

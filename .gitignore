@@ -2,3 +2,4 @@
 .venv/
 .rag_data/
 __pycache__/
+.DS_Store

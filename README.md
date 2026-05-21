@@ -15,16 +15,45 @@ The provided `Knowledge_Base_Sample (2).pdf` is image-based, so OCR is required 
 ## Architecture
 
 ```mermaid
-flowchart LR
-    Client["Client or Swagger UI"] --> API["FastAPI"]
-    API --> Upload["Background ingestion"]
-    Upload --> Extract["PDF text or OCR\nCode/text extraction"]
-    Extract --> Split["LangChain chunking"]
-    Split --> Embed["OpenAI embeddings"]
-    Embed --> Chroma["Chroma vectors and chunks"]
-    API --> SQLite["SQLite documents and query_logs"]
-    API --> Search["Query embedding and Chroma search"]
-    Search --> Chroma
+flowchart TB
+    subgraph Presentation["Presentation Layer"]
+        Client["Client / Swagger UI"]
+    end
+
+    subgraph Service["API & Service Layer"]
+        API["FastAPI Web Service"]
+        SearchService["Semantic Search Engine"]
+        IngestionTask["Background Ingestion Tasks"]
+    end
+
+    subgraph Processing["Data Processing Layer"]
+        Extract["Document Parser (PyMuPDF / OCR)"]
+        Split["Text Splitter (LangChain)"]
+        Embed["Embedding Engine (OpenAI)"]
+    end
+
+    subgraph Data["Persistence Layer"]
+        SQLite[("SQLite (Metadata & Logs)")]
+        Chroma[("ChromaDB (Vector Store)")]
+        LocalFS[("Local Storage (Uploads)")]
+    end
+
+    Client -- REST API --> API
+    
+    %% Ingestion Flow
+    API -- Upload Document --> IngestionTask
+    IngestionTask --> LocalFS
+    IngestionTask --> Extract
+    Extract --> Split
+    Split --> Embed
+    Embed --> Chroma
+    IngestionTask -- Update Status --> SQLite
+    
+    %% Query Flow
+    API -- Search Query --> SearchService
+    SearchService --> Embed
+    SearchService --> Chroma
+    SearchService -- Log Query --> SQLite
 ```
 
 ## Setup
